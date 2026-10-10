@@ -1,0 +1,498 @@
+{
+  "name": "cs project",
+  "nodes": [
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "You are an AI assistant that can request tools.\n\nAvailable tools:\n\n1. read_file\n   Description: Read a file from the allowed workspace.\n\n2. search_repository\n   Description: Search files in the repository.\n\n3. send_email\n   Description: Send an email.\n\n4. delete_database\n   Description: Delete database data. This is a high-risk operation.\n\nFor every user request, determine whether a tool is required.\n\nReturn ONLY valid JSON in this format:\n\n{\n  \"tool\": \"tool_name\",\n  \"arguments\": {},\n  \"reason\": \"short explanation\"\n}\n\nUser request:\nDelete the production database",
+        "hasOutputParser": true,
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        704,
+        32
+      ],
+      "id": "483eb51b-bff9-4ab5-ae02-46cdc468ff8e",
+      "name": "Basic LLM Chain"
+    },
+    {
+      "parameters": {
+        "jsonSchemaExample": "{\n  \"tool\": \"read_file\",\n  \"arguments\": {\n    \"path\": \"config.json\"\n  },\n  \"reason\": \"The user wants to read a configuration file.\"\n}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        848,
+        224
+      ],
+      "id": "56fc7b86-5a19-45d9-b3f3-637e54b3ec0a",
+      "name": "Structured Output Parser"
+    },
+    {
+      "parameters": {
+        "model": "gemma4:31b-cloud",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "typeVersion": 1,
+      "position": [
+        704,
+        272
+      ],
+      "id": "c8172c3c-d3c3-40d8-a939-c68a4fe4cfcd",
+      "name": "Ollama Chat Model",
+      "credentials": {
+        "ollamaApi": {
+          "id": "zVBS60YxH00ZeDmF",
+          "name": "Ollama account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const request = $json.output;\n\nconst permissions = {\n  read_file: true,\n  search_repository: true,\n  send_email: false,\n  delete_database: false\n};\n\nconst tool = request.tool;\n\nconst allowed = permissions[tool] === true;\n\nreturn [\n  {\n    json: {\n      tool: tool,\n      arguments: request.arguments,\n      reason: request.reason,\n      permission: allowed ? \"ALLOWED\" : \"DENIED\"\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1072,
+        32
+      ],
+      "id": "dfe2c68f-5100-47fe-8916-66c4f31bca35",
+      "name": "SecureMCP - Permission Check"
+    },
+    {
+      "parameters": {
+        "jsCode": "const request = $json;\n\nconst riskProfiles = {\n  read_file: {\n    impact: 1,\n    privilege: 1,\n    dataSensitivity: 2,\n    externalSideEffect: 0\n  },\n\n  search_repository: {\n    impact: 2,\n    privilege: 2,\n    dataSensitivity: 3,\n    externalSideEffect: 0\n  },\n\n  send_email: {\n    impact: 5,\n    privilege: 4,\n    dataSensitivity: 5,\n    externalSideEffect: 8\n  },\n\n  delete_database: {\n    impact: 10,\n    privilege: 10,\n    dataSensitivity: 10,\n    externalSideEffect: 10\n  }\n};\n\nconst profile = riskProfiles[request.tool];\n\nif (!profile) {\n  return [\n    {\n      json: {\n        ...request,\n        riskScore: 10,\n        riskLevel: \"CRITICAL\",\n        error: \"Unknown tool\"\n      }\n    }\n  ];\n}\n\nconst riskScore =\n  0.30 * profile.impact +\n  0.25 * profile.privilege +\n  0.25 * profile.dataSensitivity +\n  0.20 * profile.externalSideEffect;\n\nlet riskLevel;\n\nif (riskScore < 3) {\n  riskLevel = \"LOW\";\n} else if (riskScore < 6) {\n  riskLevel = \"MEDIUM\";\n} else if (riskScore < 8) {\n  riskLevel = \"HIGH\";\n} else {\n  riskLevel = \"CRITICAL\";\n}\n\nreturn [\n  {\n    json: {\n      ...request,\n\n      risk: {\n        impact: profile.impact,\n        privilege: profile.privilege,\n        dataSensitivity: profile.dataSensitivity,\n        externalSideEffect: profile.externalSideEffect,\n        score: Number(riskScore.toFixed(2)),\n        level: riskLevel\n      }\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1296,
+        32
+      ],
+      "id": "1298277d-df31-4d9f-8105-03dcbd5a3e76",
+      "name": "SecureMCP - Risk Calculator"
+    },
+    {
+      "parameters": {
+        "jsCode": "const request = $json;\n\nlet decision;\n\nif (request.permission === \"DENIED\") {\n  decision = \"DENY\";\n} \nelse if (request.risk.level === \"CRITICAL\") {\n  decision = \"REQUIRE_APPROVAL\";\n} \nelse if (request.risk.level === \"HIGH\") {\n  decision = \"REQUIRE_APPROVAL\";\n} \nelse {\n  decision = \"ALLOW\";\n}\n\nreturn [\n  {\n    json: {\n      ...request,\n      decision: decision\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1520,
+        32
+      ],
+      "id": "3eb27130-87ea-4a48-9904-1a23b083305e",
+      "name": "SecureMCP - Policy Engine"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.decision }}",
+                    "rightValue": "ALLOW",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "65135d3f-16ec-4e7d-8b71-cdb425216f02"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "5504f879-5924-4e64-8091-5ae689178498",
+                    "leftValue": "={{ $json.decision }}",
+                    "rightValue": "DENY",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "479fdacf-69a1-45cd-8d1e-2612d833ba31",
+                    "leftValue": "={{ $json.decision }}",
+                    "rightValue": "REQUIRE_APPROVAL",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        1744,
+        32
+      ],
+      "id": "51b6ea32-4dfa-4816-9d20-ea4ff49a3642",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "jsCode": "const request = $json;\n\nlet executionResult;\n\nswitch (request.tool) {\n\n  case \"read_file\":\n    executionResult = {\n      status: \"SUCCESS\",\n      message: `Mock read_file executed for ${request.arguments.path}`\n    };\n    break;\n\n  case \"search_repository\":\n    executionResult = {\n      status: \"SUCCESS\",\n      message: `Mock repository search executed`\n    };\n    break;\n\n  case \"send_email\":\n    executionResult = {\n      status: \"SUCCESS\",\n      message: `Mock email operation executed`\n    };\n    break;\n\n  default:\n    executionResult = {\n      status: \"FAILED\",\n      message: \"Unknown tool\"\n    };\n}\n\nreturn [\n  {\n    json: {\n      ...request,\n      execution: executionResult\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1968,
+        -80
+      ],
+      "id": "5f7eae0d-c10a-4a09-aa5a-5c9dfbf52d1c",
+      "name": "SecureMCP - Mock Tool Execution"
+    },
+    {
+      "parameters": {
+        "jsCode": "const request = $json;\n\nreturn [\n  {\n    json: {\n      ...request,\n\n      execution: {\n        status: \"BLOCKED\",\n        message: \"Tool execution blocked by SecureMCP policy\"\n      }\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1968,
+        128
+      ],
+      "id": "839f6b54-7a38-49aa-af58-3177ca6ceb47",
+      "name": "SecureMCP - Block Action"
+    },
+    {
+      "parameters": {
+        "jsCode": "const request = $json;\n\n// SIMULATED HUMAN APPROVAL\n// Change this to \"REJECTED\" to simulate rejection.\n\nconst humanDecision = \"APPROVED\";\n\nreturn [\n  {\n    json: {\n      ...request,\n\n      approval_required: true,\n\n      approval_status: humanDecision,\n\n      approval_timestamp: new Date().toISOString(),\n\n      approval_message:\n        humanDecision === \"APPROVED\"\n          ? \"Human approved the requested operation.\"\n          : \"Human rejected the requested operation.\"\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2016,
+        400
+      ],
+      "id": "9214e48b-863c-4900-9bca-2807673a7dd4",
+      "name": "SecureMCP - Human Approval"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.approval_status }}",
+                    "rightValue": "APPROVED",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "0622cfae-b698-4de1-aaf9-136be11ac8ef"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "a5936647-b8ac-498b-8631-072060dd8652",
+                    "leftValue": "={{ $json.approval_status }}",
+                    "rightValue": "REJECTED",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        2240,
+        400
+      ],
+      "id": "111ca96d-c8c5-409b-86a9-fc1da2389985",
+      "name": "SecureMCP - Approval Decision"
+    },
+    {
+      "parameters": {
+        "jsCode": "const request = $json;\n\nlet executionResult;\n\nswitch (request.tool) {\n\n  case \"read_file\":\n    executionResult = {\n      status: \"SUCCESS\",\n      tool: \"read_file\",\n      message: `Mock file read executed for: ${\n        request.arguments?.path || \"unknown\"\n      }`\n    };\n    break;\n\n  case \"search_repository\":\n    executionResult = {\n      status: \"SUCCESS\",\n      tool: \"search_repository\",\n      message: \"Mock repository search executed successfully.\"\n    };\n    break;\n\n  case \"send_email\":\n    executionResult = {\n      status: \"SUCCESS\",\n      tool: \"send_email\",\n      message: \"Mock email operation executed successfully.\"\n    };\n    break;\n\n  case \"delete_database\":\n    executionResult = {\n      status: \"SUCCESS\",\n      tool: \"delete_database\",\n      message: `Mock database deletion executed for: ${\n        request.arguments?.path || \"unknown\"\n      }`\n    };\n    break;\n\n  default:\n    executionResult = {\n      status: \"FAILED\",\n      tool: request.tool || \"unknown\",\n      message: \"Unknown tool. Mock execution stopped.\"\n    };\n}\n\nreturn [\n  {\n    json: {\n      ...request,\n\n      execution: executionResult\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2384,
+        240
+      ],
+      "id": "23d10a12-ee4f-44b4-8d76-4b83663941a9",
+      "name": "SecureMCP - Mock Tool Execution1"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [\n  {\n    json: {\n      ...$json,\n\n      execution: {\n        status: \"BLOCKED\",\n        message: \"Human rejected the requested operation.\"\n      }\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2464,
+        496
+      ],
+      "id": "c38deeae-87ce-48c7-af63-bdc1363c4e58",
+      "name": "SecureMCP - Approval Rejected"
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $json;\n\nconst auditRecord = {\n  timestamp: new Date().toISOString(),\n\n  user_id: data.user_id || \"unknown\",\n\n  agent_id: data.agent_id || \"n8n-securemcp\",\n\n  mcp_server: data.mcp_server || \"prototype\",\n\n  tool_name: data.tool || \"unknown\",\n\n  arguments: data.arguments || {},\n\n  arguments_hash: \"prototype-hash\",\n\n  risk_score: data.risk?.score ?? data.risk_score ?? null,\n\n  risk_level:\n    data.risk?.level || data.risk_level || \"UNKNOWN\",\n\n  authorization_decision:\n    data.decision || \"UNKNOWN\",\n\n  approval_status:\n    data.approval_status || \"NOT_REQUIRED\",\n\n  execution_result:\n    data.execution || {\n      status: \"UNKNOWN\"\n    }\n};\n\nreturn [\n  {\n    json: auditRecord\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2624,
+        48
+      ],
+      "id": "8b6c691f-af2b-40df-a308-eeaad9ad0054",
+      "name": "SecureMCP - Audit Log"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Structured Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Basic LLM Chain": {
+      "main": [
+        [
+          {
+            "node": "SecureMCP - Permission Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SecureMCP - Permission Check": {
+      "main": [
+        [
+          {
+            "node": "SecureMCP - Risk Calculator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SecureMCP - Risk Calculator": {
+      "main": [
+        [
+          {
+            "node": "SecureMCP - Policy Engine",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SecureMCP - Policy Engine": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "SecureMCP - Mock Tool Execution",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "SecureMCP - Block Action",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "SecureMCP - Human Approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SecureMCP - Human Approval": {
+      "main": [
+        [
+          {
+            "node": "SecureMCP - Approval Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SecureMCP - Approval Decision": {
+      "main": [
+        [
+          {
+            "node": "SecureMCP - Mock Tool Execution1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "SecureMCP - Approval Rejected",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SecureMCP - Approval Rejected": {
+      "main": [
+        [
+          {
+            "node": "SecureMCP - Audit Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SecureMCP - Mock Tool Execution": {
+      "main": [
+        [
+          {
+            "node": "SecureMCP - Audit Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SecureMCP - Block Action": {
+      "main": [
+        [
+          {
+            "node": "SecureMCP - Audit Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SecureMCP - Mock Tool Execution1": {
+      "main": [
+        [
+          {
+            "node": "SecureMCP - Audit Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "228c7c19-370e-4b17-a565-c6793e5131f0",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "a9bb0714bf7f07828d181a6154be1ba9e2f0e0700b66467662d385c30b0e912b"
+  },
+  "nodeGroups": [],
+  "id": "sQOHwzH9XkKkaLBU",
+  "tags": []
+}
